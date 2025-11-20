@@ -1,0 +1,18 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Streamlit app",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set STREAMLIT_BROWSER_GATHER_USAGE_STATS=false && (echo.| .venv\\Scripts\\python.exe -m streamlit run app.py)"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build"
+		}
+	]
+}
