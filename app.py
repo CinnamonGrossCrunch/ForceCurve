@@ -163,7 +163,7 @@ def build_chart(
         "<b>Time:</b> %{x:.2f}s<br>"
         "<b>" + label + ":</b> %{y:.3f}<br>"
         "<b>Velocity:</b> %{customdata[0]:.2f} m/s<br>"
-        "<b>Position:</b> %{customdata[1]:.2f} m"
+        "<b>Position:</b> %{customdata[1]:.3f} m"
         "<extra></extra>"
     )
     
@@ -176,6 +176,7 @@ def build_chart(
             line=dict(width=3),
             customdata=df[["velocity_mps", "position_m"]].values,
             hovertemplate=hover_template,
+            showlegend=True,
         )
     )
 
@@ -205,8 +206,8 @@ def build_chart(
                     ),
                     line=dict(width=0),
                 ),
-                customdata=sample[["velocity_mps", "position_m"]].values,
-                hovertemplate=hover_template,
+                hoverinfo="skip",  # Don't show hover for velocity markers
+                showlegend=False,
             )
         )
 
@@ -219,7 +220,8 @@ def build_chart(
                 mode="lines",
                 line=dict(width=2, dash="dash", color="rgba(100, 100, 100, 0.6)"),
                 yaxis="y2",
-                hovertemplate="<b>Time:</b> %{x:.2f}s<br><b>Position:</b> %{y:.3f} m<extra></extra>",
+                hoverinfo="skip",  # Don't show separate hover for position
+                showlegend=True,
             )
         )
 
@@ -242,7 +244,7 @@ def build_chart(
             # Three y-axes: force (left), position (right), ADC (far right)
             fig.update_layout(
                 yaxis=dict(title=label),
-                yaxis2=dict(title="Position (m)", overlaying="y", side="right"),
+                yaxis2=dict(title="Position (m)", overlaying="y", side="right", showgrid=False),
                 yaxis3=dict(title="ADC counts", overlaying="y", side="right", position=0.95),
             )
         else:
@@ -256,7 +258,7 @@ def build_chart(
             # Two y-axes: force (left), position (right)
             fig.update_layout(
                 yaxis=dict(title=label),
-                yaxis2=dict(title="Position (m)", overlaying="y", side="right"),
+                yaxis2=dict(title="Position (m)", overlaying="y", side="right", showgrid=False),
             )
         else:
             # Single y-axis: force only
@@ -267,8 +269,14 @@ def build_chart(
         template="plotly_white",
         margin=dict(l=40, r=40, t=10, b=40),
         height=420,
-        hovermode="x unified",  # Enable vertical line that follows mouse on x-axis
-        hoverdistance=100,
+        hovermode="x",
+        xaxis=dict(
+            showspikes=True,
+            spikemode="across",
+            spikethickness=1,
+            spikedash="dot",
+            spikecolor="#999999",
+        ),
     )
     return fig
 

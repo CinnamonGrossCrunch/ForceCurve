@@ -265,10 +265,15 @@ def simulate_rep(
     t, F, pos = simulate_trace(params)
     rng = np.random.default_rng(seed)
     F_adj, counts = _apply_sensor_effects(F, dt=1.0 / params.fs, noise=noise, rng=rng)
-    velocity = np.gradient(pos, 1.0 / params.fs)
-    if velocity.size:
-        velocity[0] = 0.0
-        velocity[-1] = 0.0
+    
+    # Calculate velocity using backward difference so velocity at time t
+    # represents how we arrived at position[t] from position[t-1]
+    dt = 1.0 / params.fs
+    velocity = np.zeros_like(pos)
+    if pos.size > 1:
+        velocity[1:] = np.diff(pos) / dt
+        velocity[0] = 0.0  # First point always starts at zero velocity
+        velocity[-1] = 0.0  # Last point always ends at zero velocity
 
     data = {
         "time_s": t,
