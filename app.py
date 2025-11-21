@@ -30,13 +30,22 @@ st.caption(
 
 
 
-def sidebar_inputs() -> tuple[bool, SimulationParams | dict[str, float], NoiseSettings, int | None]:
+def sidebar_inputs() -> tuple[bool, SimulationParams | dict[str, float], NoiseSettings, int | None, int]:
     with st.sidebar:
         st.header("Control mode")
         simple_mode = st.toggle(
             "Simple controls",
             value=True,
             help="Switch between high-level inputs and per-phase tempo parameters.",
+        )
+        
+        rep_count = st.number_input(
+            "Rep count",
+            min_value=1,
+            max_value=12,
+            value=1,
+            step=1,
+            help="Number of consecutive reps to display on the chart.",
         )
 
         if simple_mode:
@@ -135,7 +144,7 @@ def sidebar_inputs() -> tuple[bool, SimulationParams | dict[str, float], NoiseSe
             quantization_range_kN=full_scale,
         )
 
-    return simple_mode, payload, noise, seed
+    return simple_mode, payload, noise, seed, rep_count
 
 
 def build_chart(
@@ -145,13 +154,29 @@ def build_chart(
     *,
     show_velocity_heatmap: bool = False,
     velocity_column: str | None = None,
-    cursor_time: float | None = None,
-    cursor_annotation: str | None = None,
-    cursor_y: float | None = None,
+    show_position: bool = False,
 ) -> go.Figure:
     fig = go.Figure()
+    
+    # Build custom hover template with all relevant data
+    hover_template = (
+        "<b>Time:</b> %{x:.2f}s<br>"
+        "<b>" + label + ":</b> %{y:.3f}<br>"
+        "<b>Velocity:</b> %{customdata[0]:.2f} m/s<br>"
+        "<b>Position:</b> %{customdata[1]:.2f} m"
+        "<extra></extra>"
+    )
+    
     fig.add_trace(
-        go.Scatter(x=df["time_s"], y=df[value_column], name=label, mode="lines", line=dict(width=3))
+        go.Scatter(
+            x=df["time_s"], 
+            y=df[value_column], 
+            name=label, 
+            mode="lines", 
+            line=dict(width=3),
+            customdata=df[["velocity_mps", "position_m"]].values,
+            hovertemplate=hover_template,
+        )
     )
 
     if show_velocity_heatmap and velocity_column and velocity_column in df.columns:
@@ -180,28 +205,28 @@ def build_chart(
                     ),
                     line=dict(width=0),
                 ),
-                hovertemplate="t=%{x:.2f}s<br>Force=%{y:.3f}<br>Vel=%{marker.color:.2f} m/s",
+                customdata=sample[["velocity_mps", "position_m"]].values,
+                hovertemplate=hover_template,
             )
         )
 
-    if cursor_time is not None:
-        fig.add_vline(x=cursor_time, line_color="#6c6c6c", line_dash="dot", line_width=2)
-        if cursor_annotation is not None:
-            fig.add_annotation(
-                x=cursor_time,
-                y=cursor_y if cursor_y is not None else df[value_column].max(),
-                text=cursor_annotation,
-                showarrow=False,
-                bgcolor="rgba(0,0,0,0.6)",
-                font=dict(color="white", size=12),
-                yshift=35,
-                borderpad=6,
-                bordercolor="#999",
-                borderwidth=1,
-                align="left",
+    if show_position and "position_m" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df["time_s"],
+                y=df["position_m"],
+                name="Position (m)",
+                mode="lines",
+                line=dict(width=2, dash="dash", color="rgba(100, 100, 100, 0.6)"),
+                yaxis="y2",
+                hovertemplate="<b>Time:</b> %{x:.2f}s<br><b>Position:</b> %{y:.3f} m<extra></extra>",
             )
+        )
 
     if "adc_counts" in df.columns:
+        # Determine which y-axis to use for ADC counts
+        adc_yaxis = "y3" if show_position else "y2"
+        
         fig.add_trace(
             go.Scatter(
                 x=df["time_s"],
@@ -209,26 +234,46 @@ def build_chart(
                 name="ADC counts",
                 mode="lines",
                 line=dict(width=1, dash="dot"),
-                yaxis="y2",
+                yaxis=adc_yaxis,
             )
         )
-        fig.update_layout(
-            yaxis=dict(title=label),
-            yaxis2=dict(title="ADC counts", overlaying="y", side="right"),
-        )
+        
+        if show_position:
+            # Three y-axes: force (left), position (right), ADC (far right)
+            fig.update_layout(
+                yaxis=dict(title=label),
+                yaxis2=dict(title="Position (m)", overlaying="y", side="right"),
+                yaxis3=dict(title="ADC counts", overlaying="y", side="right", position=0.95),
+            )
+        else:
+            # Two y-axes: force (left), ADC (right)
+            fig.update_layout(
+                yaxis=dict(title=label),
+                yaxis2=dict(title="ADC counts", overlaying="y", side="right"),
+            )
     else:
-        fig.update_layout(yaxis=dict(title=label))
+        if show_position:
+            # Two y-axes: force (left), position (right)
+            fig.update_layout(
+                yaxis=dict(title=label),
+                yaxis2=dict(title="Position (m)", overlaying="y", side="right"),
+            )
+        else:
+            # Single y-axis: force only
+            fig.update_layout(yaxis=dict(title=label))
 
     fig.update_layout(
         xaxis_title="Time (s)",
         template="plotly_white",
         margin=dict(l=40, r=40, t=10, b=40),
         height=420,
+        hovermode="x unified",  # Enable vertical line that follows mouse on x-axis
+        hoverdistance=100,
     )
     return fig
 
 
-simple_mode, payload, noise, seed = sidebar_inputs()
+simple_mode, payload, noise, seed, rep_count = sidebar_inputs()
 
 if simple_mode:
     df = simulate_rep_simple(**payload, noise=noise, seed=seed)
@@ -237,6 +282,16 @@ else:
     params = cast(SimulationParams, payload)
     df = simulate_rep(params, noise=noise, seed=seed)
     fs_current = params.fs
+
+# Multiply the curve for multiple reps
+if rep_count > 1:
+    single_rep_duration = float(df["time_s"].iloc[-1])
+    frames = []
+    for rep in range(rep_count):
+        rep_df = df.copy()
+        rep_df["time_s"] = rep_df["time_s"] + (rep * single_rep_duration)
+        frames.append(rep_df)
+    df = pd.concat(frames, ignore_index=True)
 
 rep_duration = float(df["time_s"].iloc[-1])
 
@@ -254,6 +309,12 @@ curve_style = st.radio(
     horizontal=True,
 )
 show_heatmap = curve_style == "Velocity heatmap overlay"
+
+show_position = st.toggle(
+    "Overlay position curve",
+    value=False,
+    help="Show position (displacement) on a secondary y-axis."
+)
 
 if force_unit == "Force (kN)":
     display_column = "force_kN"
@@ -282,33 +343,6 @@ vel_cols[1].metric(
     "Peak eccentric velocity", f"{abs(max_ecc_vel):.2f} m/s", help="Absolute value during descent"
 )
 
-slider_max = max(rep_duration, 0.1)
-cursor_step = max(round(1.0 / fs_current, 4), 0.001)
-cursor_default = min(rep_duration, slider_max / 2)
-cursor_time = st.slider(
-    "Timeline cursor",
-    min_value=0.0,
-    max_value=slider_max,
-    value=cursor_default,
-    step=cursor_step,
-    help="Drag to sweep a vertical bar across the rep and read values at that instant.",
-)
-cursor_time = min(cursor_time, df["time_s"].iloc[-1])
-cursor_idx = int((df["time_s"] - cursor_time).abs().idxmin())
-cursor_row = df.loc[cursor_idx]
-
-cursor_force = float(cursor_row[display_column])
-cursor_vel = float(cursor_row["velocity_mps"])
-cursor_pos = float(cursor_row["position_m"])
-cursor_annotation = (
-    f"t={cursor_row['time_s']:.2f}s<br>{display_label}: {cursor_force:.3f} {metric_suffix}"
-    f"<br>Velocity: {cursor_vel:.2f} m/s"
-)
-
-st.caption(
-    f"Cursor → Force {cursor_force:.3f} {metric_suffix} · Velocity {cursor_vel:.2f} m/s · Position {cursor_pos:.2f} m"
-)
-
 st.plotly_chart(
     build_chart(
         df,
@@ -316,9 +350,7 @@ st.plotly_chart(
         display_label,
         show_velocity_heatmap=show_heatmap,
         velocity_column="velocity_mps",
-        cursor_time=cursor_row["time_s"],
-        cursor_annotation=cursor_annotation,
-        cursor_y=cursor_force,
+        show_position=show_position,
     ),
     width="stretch",
 )
